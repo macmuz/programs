@@ -1,0 +1,173 @@
+PROGRAM roms_ave
+    USE netcdf
+    implicit none
+    integer, parameter :: npt3d=0,npt4d=1,nvar3d=0,nvar4d=2
+    integer :: date(3),datestp(3),cnt,i,j,n3d
+    integer :: ncid,dimid,ncid2,tdimid
+    integer :: pt3d(npt3d,2),pt4d(npt4d,3)
+    integer :: ni,nj,nk,nt,vid,varid(1+npt3d*nvar3d+npt4d*nvar4d)
+    character(len=200) :: filename,path
+    character(len=30) :: vname3d(nvar3d),vname4d(nvar4d),varn
+    real(kind=8), allocatable :: time(:)
+    real(kind=4), allocatable :: datatmp(:)
+    logical :: first
+
+    100 format(a,'/ocean_avg_',i4,'-',i2.2,'-',i2.2,'.nc')
+    101 format(a,'_pt',i2.2)
+!    path = '/users/work/mmuzyka/CSDIR/metro_05NM_era5/run/baltic'
+!    path = '/users/magazyn/mmuzyka/ROMS_CASES/metro_560x600_era5v2'
+    path = '/users/magazyn/mmuzyka/ROMS_CASES/metro_560x600_era5v2'
+!    path = '/users/magazyn/mmuzyka/ROMS_CASES/metro_560x600_era5'
+!    path = '/users/work/mmuzyka/CSDIR/metro_05NM_era5/run/baltic'
+    
+    date = (/1998,7,1/)
+    datestp = (/2002,7,1/)
+
+!    pt3d(1,:) = (/150,490/)
+!    pt3d(2,:) = (/211,490/)
+
+!    vname3d(1) = 'zeta'
+
+    pt4d(1,:) = (/286,57,1/)
+!    pt4d(1,:) = (/190,83,1/)
+
+!    vname4d(1) = 'temp'
+!    vname4d(2) = 'salt'
+    vname4d(1) = 'salt'
+    vname4d(2) = 'temp'
+
+    n3d = npt3d*nvar3d
+    first = .true.
+    cnt = 0
+    CALL check(nf90_create('stats_05.nc',NF90_NETCDF4,ncid2),310)
+
+    do
+        write(filename,100) trim(path),date(1),date(2),date(3)
+        write(*,*) trim(filename)        
+
+        CALL check(nf90_open(trim(filename),NF90_NOWRITE,ncid),310)
+        if (first) then
+            CALL check(nf90_inq_dimid(ncid, "xi_rho", dimid),311)
+            CALL check(nf90_inquire_dimension(ncid, dimid, len=ni),312)
+
+            CALL check(nf90_inq_dimid(ncid, "eta_rho", dimid),313)
+            CALL check(nf90_inquire_dimension(ncid, dimid, len=nj),314)
+        
+            CALL check(nf90_inq_dimid(ncid, "s_rho", dimid),313)
+            CALL check(nf90_inquire_dimension(ncid, dimid, len=nk),314)
+
+            CALL check(nf90_inq_dimid(ncid, "ocean_time", dimid),315)
+            CALL check(nf90_inquire_dimension(ncid, dimid, len=nt),316)
+
+            allocate( time(nt), datatmp(nt) )
+
+            CALL check(nf90_inq_varid(ncid,'ocean_time',vid),120)
+
+            CALL check( nf90_def_dim( ncid2, 'time', NF90_UNLIMITED, tdimid ),503)
+            CALL check( nf90_def_var( ncid2, 'time', NF90_DOUBLE, (/tdimid/), varid(1) ), 504)
+            CALL check( nf90_copy_att(ncid, vid, 'long_name', ncid2, varid(1)), 504)
+            CALL check( nf90_copy_att(ncid, vid, 'units', ncid2, varid(1)), 504)
+            CALL check( nf90_copy_att(ncid, vid, 'calendar', ncid2, varid(1)), 504)
+            CALL check( nf90_copy_att(ncid, vid, 'field', ncid2, varid(1)), 504)
+
+            do i = 1, nvar3d
+            do j = 1, npt3d
+            write(varn,101) trim(vname3d(i)),j
+            CALL check( nf90_def_var( ncid2, trim(varn), NF90_FLOAT,&
+              (/tdimid/),varid(1+j+(i-1)*npt3d) ), 504)
+            end do
+            end do
+
+            do i = 1, nvar4d
+            do j = 1, npt4d
+            write(varn,101) trim(vname4d(i)),j
+            CALL check( nf90_def_var( ncid2, trim(varn), NF90_FLOAT,&
+              (/tdimid/),varid(1+n3d+j+(i-1)*npt4d) ), 504)
+            end do
+            end do
+
+            CALL check( nf90_enddef(ncid2), 516 )
+            first = .false.
+        end if
+
+        CALL check(nf90_inq_varid(ncid,'ocean_time',vid),120)
+        CALL check(nf90_get_var(ncid,vid,time),18)
+        CALL check( nf90_put_var( ncid2, varid(1), time, start=(/cnt+1/) ), 517 )
+
+        do i = 1, nvar3d
+        CALL check(nf90_inq_varid(ncid,vname3d(i),vid),120)
+        do j = 1, npt3d
+        CALL check(nf90_get_var(ncid,vid,datatmp,start=(/pt3d(j,1),&
+            pt3d(j,2),1/),count = (/1,1,nt/)),18)
+        CALL check( nf90_put_var( ncid2, varid(1+j+(i-1)*npt3d),&
+            datatmp, start=(/cnt+1/) ), 517 )
+        end do
+        end do
+
+        do i = 1, nvar4d
+        CALL check(nf90_inq_varid(ncid,vname4d(i),vid),120)
+        do j = 1, npt4d
+        CALL check(nf90_get_var(ncid,vid,datatmp,start=(/pt4d(j,1),&
+            pt4d(j,2),pt4d(j,3),1/),count = (/1,1,1,nt/)),18)
+        CALL check( nf90_put_var( ncid2, varid(1+n3d+j+(i-1)*npt4d),&
+            datatmp, start=(/cnt+1/) ), 517 )
+        end do
+        end do
+        
+        CALL check(nf90_close(ncid),360)
+
+        cnt = cnt+nt
+
+        if (date(1).ge.datestp(1).and.&
+            date(2).ge.datestp(2).and.&
+            date(3).ge.datestp(3)) EXIT
+        CALL add_day(date,.true.)
+    end do
+
+    CALL check(nf90_close(ncid2),360)
+   
+    deallocate(time,datatmp) 
+    
+END PROGRAM roms_ave
+
+SUBROUTINE check(status,label)
+    USE NETCDF
+    implicit none
+    INTEGER, INTENT(in) :: status , label
+
+    IF (status .ne. nf90_noerr) then
+        print*, trim(nf90_strerror(status)),' label= ',label
+        stop "Stopped"
+    END IF
+END SUBROUTINE check
+
+SUBROUTINE add_day(date,use_leap)
+    implicit none
+    integer, intent(inout) :: date(3)
+    logical, intent(in) :: use_leap
+
+    logical :: leap
+    integer :: days_in_month(12)
+
+    days_in_month = (/31,28,31,30,31,30,31,31,30,31,30,31/)
+
+    if ( date(2).eq.2 .and. date(3).eq.28 .and. use_leap) then
+        leap = .false.
+        if ( mod(date(1),4).eq.0 ) leap = .true.
+        if ( mod(date(1),100).eq.0 ) leap = .false.
+        if ( mod(date(1),400).eq.0 ) leap = .true.
+
+        if ( leap ) days_in_month(2) = 29
+    end if
+
+    date(3) = date(3)+1
+    if ( date(3).gt.days_in_month(date(2)) ) then
+        date(3) = 1
+        date(2) = date(2)+1
+        if ( date(2).gt.12 ) then
+            date(2) = 1
+            date(1) = date(1)+1
+        end if
+    end if
+
+END SUBROUTINE add_day

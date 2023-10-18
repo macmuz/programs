@@ -1,0 +1,531 @@
+PROGRAM forcing
+    USE NETCDF
+    USE netcdf
+    implicit none
+    integer :: i,j,k,ncid,nx,ny,nz,nt,dimid,varid
+    integer :: onx,ony
+    integer :: ncids(7),varids(8)
+    integer :: xdimid,ydimid,tdimid,dimids3(3)
+    integer :: date(3),date0(3)
+    integer :: narg,year,julian
+    real(kind=8), allocatable :: lon(:),lat(:),lat_tmp(:),input(:,:,:,:)
+    real(kind=8), allocatable :: olon(:,:),olat(:,:),time(:),output(:,:,:)
+    real(kind=8) :: sf,af
+    integer(kind=2), allocatable :: input_tmp(:,:,:)
+    character(len=4) :: varname(8)
+    character(len=10) :: buffer,names(7),vnam(8),tdim(7)
+    character(len=30) :: filename,outfile,units(8)
+    character(len=100) :: grid, longnames(8),tnames(7)
+    logical :: yleap,ex1
+
+    !SET STACKSIZE EQUAL 1024 MB per thread
+!    CALL KMP_SET_STACKSIZE_S(3221225472)
+    CALL KMP_SET_STACKSIZE_S(5368709120)
+    !END SET
+
+    grid = "ROMS_grid_2_3km_560x600_NetCDF4.nc"
+
+101 FORMAT('ERA5_',i4.4,'.nc')
+102 FORMAT('baltic_',a,'_',i4.4,'.nc')
+
+    varname(1) = "strd"
+    varname(2) = "ssr"
+    varname(3) = "tp"
+    varname(4) = "t2m"
+    varname(5) = "msl"
+    varname(6) = "d2m"
+    varname(7) = "u10"
+    varname(8) = "v10"
+
+    names(1) = "lwrad_down"
+    names(2) = "swrad"
+    names(3) = "rain"
+    names(4) = "Tair"
+    names(5) = "Pair"
+    names(6) = "Qair"
+    names(7) = "wind"
+
+    tdim(1) = "lrf_time"
+    tdim(2) = "srf_time"
+    tdim(3) = "rain_time"
+    tdim(4) = "tair_time"
+    tdim(5) = "pair_time"
+    tdim(6) = "qair_time"
+    tdim(7) = "wind_time"
+
+    tnames(1) = "time for heat flux"
+    tnames(2) = "time for heat flux"
+    tnames(3) = "time for surface air temperature"
+    tnames(4) = "time for surface air temperature"
+    tnames(5) = "time for surface air pressure"
+    tnames(6) = "time for surface air specific humidity"
+    tnames(7) = "10-meter wind time"
+
+    vnam(1) = "lwrad_down"
+    vnam(2) = "swrad"
+    vnam(3) = "rain"
+    vnam(4) = "Tair"
+    vnam(5) = "Pair"
+    vnam(6) = "Qair"
+    vnam(7) = "Uwind"
+    vnam(8) = "Vwind"
+
+    longnames(1) = "longwave downward radiation"
+    longnames(2) = "solar shortwave radiation"
+    longnames(3) = "rain fall rate"
+    longnames(4) = "surface air temperature"
+    longnames(5) = "surface air pressure"
+    longnames(6) = "surface air specific humidity"
+    longnames(7) = "10-meter u-wind component"
+    longnames(8) = "10-meter v-wind component"
+
+    units(1) = "Watts meter-2"
+    units(2) = "Watts meter-2"
+    units(3) = "kilogram meter-2 sec"
+    units(4) = "Celsius"
+    units(5) = "millibar"
+    units(6) = "kg/kg"
+    units(7) = "meter second-1"
+    units(8) = "meter second-1"
+
+!READ command line arg: YEAR
+    narg = command_argument_count()
+    if (narg.ne.1) then
+      write(*,*) "Program must have YEAR as argument"
+      stop
+    end if
+    call get_command_argument(1,buffer)
+    read(buffer, *) year
+!END READ
+
+!READ GRID
+    CALL check(nf90_open(trim(grid),NF90_NOWRITE,ncid),310)
+
+    CALL check(nf90_inq_dimid(ncid, "xi_rho", dimid),311)
+    CALL check(nf90_inquire_dimension(ncid, dimid, len=onx),312)
+
+    CALL check(nf90_inq_dimid(ncid, "eta_rho", dimid),313)
+    CALL check(nf90_inquire_dimension(ncid, dimid, len=ony),314)
+   
+    allocate( olon(onx,ony), olat(onx,ony), output(onx,ony,10) )
+
+    CALL check(nf90_inq_varid(ncid,"lon_rho",varid),317)
+    CALL check(nf90_get_var(ncid,varid,olon),318)
+
+    CALL check(nf90_inq_varid(ncid,"lat_rho",varid),319)
+    CALL check(nf90_get_var(ncid,varid,olat),320)
+ 
+    CALL check(nf90_close(ncid),360) 
+!END READ GRID
+
+
+    write(filename,101) year
+    CALL check(nf90_open(trim(filename),NF90_NOWRITE,ncid),10)
+
+    CALL check(nf90_inq_dimid(ncid, "longitude", dimid),11)
+    CALL check(nf90_inquire_dimension(ncid, dimid, len=nx),12)
+
+    CALL check(nf90_inq_dimid(ncid, "latitude", dimid),13)
+    CALL check(nf90_inquire_dimension(ncid, dimid, len=ny),14)
+
+    CALL check(nf90_inq_dimid(ncid, "time", dimid),15)
+    CALL check(nf90_inquire_dimension(ncid, dimid, len=nt),16)
+
+    allocate( lon(nx), lat(ny), input(nx,ny,nt,9) )
+    allocate( lat_tmp(ny), input_tmp(nx,ny,nt), time(nt) )
+
+    CALL check(nf90_inq_varid(ncid,"longitude",varid),17)
+    CALL check(nf90_get_var(ncid,varid,lon),18)
+
+    CALL check(nf90_inq_varid(ncid,"latitude",varid),19)
+    CALL check(nf90_get_var(ncid,varid,lat_tmp),20)
+
+    do j = 1, ny
+      lat(j) = lat_tmp(ny+1-j)
+    end do
+
+    do i = 1,8
+      CALL check(nf90_inq_varid(ncid,varname(i),varid),20+i)
+      CALL check(nf90_get_var(ncid,varid,input_tmp(:,:,1:nt-1), &
+        start=(/1,1,2/),count=(/nx,ny,nt-1/) ),30+i)
+      CALL check(nf90_get_att(ncid, varid, "scale_factor", sf),40+i)
+      CALL check(nf90_get_att(ncid, varid, "add_offset", af),50+i)
+
+      do j = 1, ny
+        input(:,j,1:nt-1,i) = real(input_tmp(:,ny+1-j,1:nt-1),8)*sf+af
+      end do 
+    end do
+
+    CALL check(nf90_close(ncid),60)
+
+
+    write(filename,101) year+1
+    INQUIRE(FILE=trim(filename),EXIST=ex1)
+    if (ex1) then
+      CALL check(nf90_open(trim(filename),NF90_NOWRITE,ncid),100)
+
+      do i = 1,8
+        CALL check(nf90_inq_varid(ncid,varname(i),varid),120+i)
+        CALL check(nf90_get_var(ncid,varid,input_tmp(:,:,nt), &
+          start=(/1,1,1/),count=(/nx,ny,1/) ),130+i)
+        CALL check(nf90_get_att(ncid, varid, "scale_factor", sf),140+i)
+        CALL check(nf90_get_att(ncid, varid, "add_offset", af),150+i)
+
+        do j = 1, ny
+          input(:,j,nt,i) = real(input_tmp(:,ny+1-j,nt),8)*sf+af
+        end do
+      end do 
+
+      CALL check(nf90_close(ncid),160)
+    else
+      input(:,:,nt,:) = input(:,:,nt-1,:)
+    end if
+
+ 
+    
+    date0=(/1968,5,23/)
+    date=(/year,1,1/)
+    CALL elapsed(date,date0,julian)
+    time(1) = real(julian,8)+1.0/24.0
+    do i = 2, nt
+      time(i) = time(i-1)+1.0/24.0
+    end do
+
+    !CREATE OUTPUT FILE
+    do i = 1,7
+      write(outfile,102) trim(names(i)),year
+
+      CALL check( nf90_create( trim(outfile),NF90_NETCDF4,ncids(i) ), 500 ) 
+    
+      CALL check( nf90_def_dim( ncids(i), 'xi_rho', onx, xdimid ), 501 )
+      CALL check( nf90_def_dim( ncids(i), 'eta_rho', ony, ydimid ), 502 )
+      CALL check( nf90_def_dim( ncids(i), trim(tdim(i)), NF90_UNLIMITED, tdimid ),503) 
+
+      dimids3 = (/ xdimid, ydimid, tdimid /)
+
+      CALL check(nf90_def_var( ncids(i), trim(tdim(i)), NF90_DOUBLE,&
+        (/tdimid/), varid ), 504)
+      CALL check( nf90_put_att( ncids(i), varid, 'long_name',&
+        trim(tnames(i)) ), 505 )
+      CALL check( nf90_put_att( ncids(i), varid, 'units',&
+        "days since 1968-05-23 00:00:00 GMT" ), 506 )
+      CALL check( nf90_put_att( ncids(i), varid, 'calendar',&
+        "gregorian" ), 507 )
+
+      CALL check(nf90_def_var( ncids(i), trim(vnam(i)), NF90_FLOAT,&
+        dimids3, varids(i) ), 508)
+      CALL check( nf90_put_att( ncids(i), varids(i), 'long_name',&
+        trim(longnames(i)) ), 509 )
+      CALL check( nf90_put_att( ncids(i), varids(i), 'units',&
+        trim(units(i)) ), 510 )
+      CALL check( nf90_put_att( ncids(i), varids(i), 'time',&
+        trim(tdim(i)) ), 511 )
+
+      if (i.eq.7) then
+        CALL check(nf90_def_var( ncids(i), trim(vnam(8)), NF90_FLOAT,&
+          dimids3, varids(8) ), 512)
+        CALL check( nf90_put_att( ncids(i), varids(8), 'long_name',&
+          trim(longnames(8)) ), 513 )
+        CALL check( nf90_put_att( ncids(i), varids(8), 'units',&
+          trim(units(8)) ), 514 )
+        CALL check( nf90_put_att( ncids(i), varids(8), 'time',&
+          trim(tdim(i)) ), 515 )
+      end if
+
+      CALL check( nf90_enddef(ncids(i)), 516 )
+
+      CALL check( nf90_put_var( ncids(i), varid, time ), 517 )
+
+    end do
+    !END CREATE
+   
+!$OMP PARALLEL DO DEFAULT(PRIVATE),SHARED(nx,ny,nt,onx,ony,input),&
+!$OMP& SHARED(lon,lat,olon,olat,ncids,varids), SCHEDULE(DYNAMIC)
+    do i = 1, nt
+      CALL interp(nx,ny,onx,ony,lon,lat,olon,olat,input(:,:,i,1),output(:,:,1))  
+      CALL interp(nx,ny,onx,ony,lon,lat,olon,olat,input(:,:,i,2),output(:,:,2))  
+      CALL interp(nx,ny,onx,ony,lon,lat,olon,olat,input(:,:,i,3),output(:,:,3))  
+      CALL interp(nx,ny,onx,ony,lon,lat,olon,olat,input(:,:,i,4),output(:,:,4))  
+      CALL interp(nx,ny,onx,ony,lon,lat,olon,olat,input(:,:,i,5),output(:,:,5))  
+      CALL interp(nx,ny,onx,ony,lon,lat,olon,olat,input(:,:,i,6),output(:,:,9))  
+      CALL interp(nx,ny,onx,ony,lon,lat,olon,olat,input(:,:,i,7),output(:,:,7))  
+      CALL interp(nx,ny,onx,ony,lon,lat,olon,olat,input(:,:,i,8),output(:,:,8))
+      CALL spec_humid(onx,ony,output(:,:,9),output(:,:,5),output(:,:,6))
+
+      !LWRAD
+      output(:,:,1) = output(:,:,1)/3600
+      !SWRAD
+      where(output(:,:,2).lt.0) output(:,:,2) = 0.0
+      output(:,:,2) = output(:,:,2)/3600
+      !RAIN
+      where(output(:,:,3).lt.0) output(:,:,3) = 0.0       
+      output(:,:,3) = output(:,:,3)/3.6
+      !TEMP
+      output(:,:,4) = output(:,:,4)-273.15
+      !PRESS
+      output(:,:,5) = output(:,:,5)/100
+      
+ 
+      !$OMP CRITICAL
+      do j = 1, 7
+        CALL check( nf90_put_var( ncids(j), varids(j), real(output(:,:,j),4),&
+             start = (/ 1, 1, i /) ), 518 )
+        if (j.eq.7) then
+          CALL check( nf90_put_var( ncids(j), varids(8), real(output(:,:,8),4),&
+             start = (/ 1, 1, i /) ), 519 )
+        end if
+      end do
+      !$OMP END CRITICAL
+      write(*,*) 'i=',i 
+    end do
+!$OMP END PARALLEL DO
+
+ 
+    do i = 1,7
+      CALL check( nf90_close(ncids(i)), 600 )
+    end do
+
+    deallocate( lon, lat, lat_tmp, input, input_tmp, time )
+    deallocate( olon, olat, output )
+
+END PROGRAM forcing
+
+SUBROUTINE check(status,label)
+    USE NETCDF
+    implicit none
+    INTEGER, INTENT(in) :: status , label
+
+    IF (status .ne. nf90_noerr) then
+        print*, trim(nf90_strerror(status)),' label= ',label
+        stop "Stopped"
+    END IF
+END SUBROUTINE check
+
+SUBROUTINE elapsed(date,date_0,days)
+    implicit none
+    integer, intent(in) :: date(3),date_0(3)
+    integer, intent(out) :: days
+
+    integer :: date_tmp(3)
+
+    date_tmp(1) = date_0(1)
+    date_tmp(2) = date_0(2)
+    date_tmp(3) = date_0(3)
+
+    days = 0
+
+    do
+        if( date_tmp(1).eq.date(1) .and.&
+            date_tmp(2).eq.date(2) .and.&
+            date_tmp(3).eq.date(3) ) EXIT
+        days = days+1
+        CALL add_day(date_tmp,.true.)
+    end do
+END SUBROUTINE elapsed
+
+SUBROUTINE add_day(date,use_leap)
+    implicit none
+    integer, intent(inout) :: date(3)
+    logical, intent(in) :: use_leap
+
+    logical :: leap
+    integer :: days_in_month(12)
+
+    days_in_month = (/31,28,31,30,31,30,31,31,30,31,30,31/)
+
+    if ( date(2).eq.2 .and. date(3).eq.28 .and. use_leap) then
+        leap = .false.
+        if ( mod(date(1),4).eq.0 ) leap = .true.
+        if ( mod(date(1),100).eq.0 ) leap = .false.
+        if ( mod(date(1),400).eq.0 ) leap = .true.
+
+        if ( leap ) days_in_month(2) = 29
+    end if
+
+    date(3) = date(3)+1
+    if ( date(3).gt.days_in_month(date(2)) ) then
+        date(3) = 1
+        date(2) = date(2)+1
+        if ( date(2).gt.12 ) then
+            date(2) = 1
+            date(1) = date(1)+1
+        end if
+    end if
+
+END SUBROUTINE add_day
+
+SUBROUTINE leap(year,answer)
+    implicit none
+    integer, intent(in) :: year
+    logical, intent(out) :: answer
+
+    answer = .false.
+    if( mod(year,4).eq.0 ) answer = .true.
+    if( mod(year,4).eq.100 ) answer = .false.
+    if( mod(year,4).eq.400 ) answer = .true.
+END SUBROUTINE leap
+
+SUBROUTINE spec_humid(nx,ny,dew,p,output)
+    implicit none
+    integer, intent(in) :: nx,ny
+    real(kind=8), intent(in) :: dew(nx,ny),p(nx,ny)
+    real(kind=8), intent(out) :: output(nx,ny)
+
+    integer :: i,j
+    real(kind=8) :: Rdry,Rvap,a1,a3,a4,T0
+    real(kind=8) :: esat(nx,ny)
+
+    Rdry = 287.0597
+    Rvap = 461.5250
+    a1 = 611.21
+    a3 = 17.502
+    a4 = 32.19
+    T0 = 273.16
+
+    do i = 1, nx
+      do j = 1, ny
+        esat(i,j) = a1*exp(a3*((dew(i,j)-T0)/(dew(i,j)-a4)))
+      end do
+    end do       
+
+    do i = 1, nx
+      do j = 1, ny
+        output(i,j) = (Rdry*esat(i,j)/Rvap)/(p(i,j)-(1-Rdry/Rvap)*esat(i,j))
+      end do
+    end do       
+END SUBROUTINE spec_humid
+
+FUNCTION splint(xa,ya,y2a,n,x)
+    IMPLICIT NONE
+    INTEGER, INTENT(IN) :: n
+    REAL(kind=8), DIMENSION(n),  INTENT(IN) :: xa,ya,y2a
+    REAL(kind=8), INTENT(IN) ::  x
+
+    INTEGER :: khi,klo,locate,jl,jm,ju
+    REAL(kind=8) :: a,b,h,splint
+    LOGICAL :: ascnd
+
+    ascnd=(xa(n)>=xa(1))
+    jl=0
+    ju=n+1
+    do
+        if (ju-jl<=1) exit
+        jm=(ju+jl)/2
+        if (ascnd .eqv. (x>=xa(jm))) then
+            jl=jm
+        else
+            ju=jm
+        end if
+    end do
+
+    if (x==xa(1)) then
+        locate=1
+    else if (x==xa(n)) then
+        locate=n-1
+    else
+        locate=jl
+    end if
+
+    klo=max(min(locate,n-1),1)
+    khi=klo+1
+    h=xa(khi)-xa(klo)
+    if (h == 0.0) then
+        write(*,*) 'bad xa input in splint'
+        STOP
+    end if
+    a=(xa(khi)-x)/h
+    b=(x-xa(klo))/h
+    splint=a*ya(klo)+b*ya(khi)+((a**3-a)*y2a(klo)+(b**3-b)*y2a(khi))*(h**2)/6.0
+END FUNCTION splint
+
+SUBROUTINE spline(x,y,n,y2)
+    IMPLICIT NONE
+    INTEGER, INTENT(IN) :: n
+    REAL(kind=8), DIMENSION(n), INTENT(IN) :: x,y
+    REAL(kind=8), DIMENSION(n), INTENT(OUT) :: y2
+
+    REAL(kind=8), DIMENSION(n) :: a,b,c,r
+
+    c(1:n-1)=x(2:n)-x(1:n-1)
+    r(1:n-1)=6.0*((y(2:n)-y(1:n-1))/c(1:n-1))
+    r(2:n-1)=r(2:n-1)-r(1:n-2)
+    a(2:n-1)=c(1:n-2)
+    b(2:n-1)=2.0*(c(2:n-1)+a(2:n-1))
+    b(1)=1.0
+    b(n)=1.0
+    r(1)=0.0
+    c(1)=0.0
+    r(n)=0.0
+    a(n)=0.0
+    call tridag(n,a(2:n),b(1:n),c(1:n-1),r(1:n),y2(1:n))
+END SUBROUTINE spline
+
+SUBROUTINE splie2(x2a,m,n,ya,y2a)
+    IMPLICIT NONE
+    INTEGER, INTENT(IN) :: m,n
+    REAL(kind=8), DIMENSION(n), INTENT(IN) :: x2a
+    REAL(kind=8), DIMENSION(m,n), INTENT(IN) :: ya
+    REAL(kind=8), DIMENSION(m,n), INTENT(OUT) :: y2a
+
+    INTEGER :: j
+
+    DO j=1,m
+        call spline(x2a,ya(j,:),n,y2a(j,:))
+    END DO
+END SUBROUTINE splie2
+
+SUBROUTINE tridag(n,a,b,c,r,u)
+    IMPLICIT NONE
+    INTEGER, INTENT(IN) :: n
+    REAL(kind=8), DIMENSION(n), INTENT(IN) :: b,r
+    REAL(kind=8), DIMENSION(n-1), INTENT(IN) :: a,c
+    REAL(kind=8), DIMENSION(n), INTENT(OUT) :: u
+
+    REAL(kind=8) :: gam(n),bet
+    INTEGER :: j
+
+    bet=b(1)
+
+    if (bet==0.0) then
+        write(*,*) 'tridag: Error at code stage 1'
+        STOP
+    end if
+
+    u(1)=r(1)/bet
+    do j=2,n
+        gam(j)=c(j-1)/bet
+        bet=b(j)-a(j-1)*gam(j)
+        if (bet==0.0) then
+            write(*,*) 'tridag: Error at code stage 2'
+            STOP
+        end if
+        u(j)=(r(j)-a(j-1)*u(j-1))/bet
+    end do
+    do j=n-1,1,-1
+        u(j)=u(j)-gam(j+1)*u(j+1)
+    end do
+END SUBROUTINE tridag
+
+SUBROUTINE interp(nx,ny,onx,ony,lon,lat,olon,olat,input,output)
+    implicit none
+    integer, intent(in) :: nx,ny,onx,ony
+    real(kind=8), intent(in) :: lon(nx),lat(ny)
+    real(kind=8), intent(in) :: olon(onx,ony),olat(onx,ony)
+    real(kind=8), intent(in) :: input(nx,ny)
+    real(kind=8), intent(out) :: output(onx,ony)
+    
+    integer :: i,j,x
+    real(kind=8) :: splint
+    real(kind=8) :: y2a(nx,ny),line(nx),y2line(nx)
+
+    CALL splie2(lat,nx,ny,input,y2a)
+    do i = 1, onx
+      do j = 1, ony
+        do x = 1, nx
+          line(x) = splint(lat,input(x,:),y2a(x,:),ny,olat(i,j))
+        end do
+        call spline(lon,line,nx,y2line)
+        output(i,j) = splint(lon,line,y2line,nx,olon(i,j))
+      end do
+    end do 
+END SUBROUTINE interp
